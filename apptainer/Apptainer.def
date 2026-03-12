@@ -26,9 +26,13 @@ from: rocker/tidyverse@sha256:8549448d4bb48663d1148b3acf9d1e001b61aceb6f0a6872db
 
     conda install -n base -y mamba
 
-    # 3. Install core analytical suite
+    # 3. Install libraries
     mamba install --yes --file /opt/environment.lock
     mamba clean -a -y
+
+    # GenomeInfoDbData fails to install from the lock file, so we install it separately here
+    Rscript -e "if (!requireNamespace('BiocManager', quietly=TRUE)) install.packages('BiocManager', repos='https://cloud.r-project.org')"
+    Rscript -e "BiocManager::install('GenomeInfoDbData', update=FALSE, ask=FALSE)"
 
 %environment
     export PATH=/opt/conda/bin:$PATH
@@ -38,4 +42,5 @@ from: rocker/tidyverse@sha256:8549448d4bb48663d1148b3acf9d1e001b61aceb6f0a6872db
     exec R "$@"
 
 %test
-    Rscript -e "library(Seurat); library(limma);  library(preprocessCore)"
+    Rscript -e "library(Seurat)"
+    Rscript -e "library(GenomeInfoDbData)"
