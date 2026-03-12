@@ -1,6 +1,6 @@
 #!/bin/bash
-#SBATCH -p short
-#SBATCH -o apptainer/build.stdout.log
-#SBATCH --mem 64GB
+#SBATCH --partition=short
+#SBATCH --mem=16G
+#SBATCH --output=build.log
 
-apptainer build apptainer/Apptainer.sif apptainer/Apptainer.def 
+apptainer build --force Apptainer.sif Apptainer.def

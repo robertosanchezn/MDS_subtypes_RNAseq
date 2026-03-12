@@ -1,8 +1,11 @@
 Bootstrap: docker
-from: rocker/tidyverse:4.3
+from: rocker/tidyverse@sha256:8549448d4bb48663d1148b3acf9d1e001b61aceb6f0a6872dbbdcada2530da56
+
+%files 
+    environment.lock /opt/environment.lock
 
 %post
-    # 1. Install System Dependencies (CRITICAL for Bioinfo packages)
+    # 1. Install System Dependencies 
     apt-get update && apt-get install -y --no-install-recommends \
         libxml2-dev \
         libglpk-dev \
@@ -24,18 +27,7 @@ from: rocker/tidyverse:4.3
     conda install -n base -y mamba
 
     # 3. Install core analytical suite
-    mamba install -n base -y \
-	    r-tidyverse \
-        r-hdf5r \
-        r-seurat \
-        bioconda::r-presto \
-        bioconda::bioconductor-limma \
-        bioconda::bioconductor-preprocesscore \
-        bioconda::bioconductor-org.hs.eg.db \
-        bioconda::bioconductor-clusterprofiler \
-        bioconda::bioconductor-geoquery 
-
-    # 4. Cleanup
+    mamba install --yes --file /opt/environment.lock
     mamba clean -a -y
 
 %environment
