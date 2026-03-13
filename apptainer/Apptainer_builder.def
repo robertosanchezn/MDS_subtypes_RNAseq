@@ -1,10 +1,8 @@
-
-
 Bootstrap: docker
 from: rocker/tidyverse@sha256:8549448d4bb48663d1148b3acf9d1e001b61aceb6f0a6872dbbdcada2530da56
 
 %files 
-    environment.yml /opt/environment.yml
+    environment.lock /opt/environment.lock
 
 %post
     # 1. Install System Dependencies 
@@ -29,11 +27,24 @@ from: rocker/tidyverse@sha256:8549448d4bb48663d1148b3acf9d1e001b61aceb6f0a6872db
     conda install -n base -y mamba
 
     # 3. Install libraries
-    mamba install --yes --file /opt/environment.yml
-    mamba clean -a -y
+    mamba install --yes \
+        r-tidyverse \
+        r-hdf5r \
+        r-seurat \
+        r-biocmanager \
+        r-dirichletreg \
+        r-rmdformats \
+        bioconda::bioconductor-limma \
+        bioconda::bioconductor-complexheatmap \
+        bioconda::bioconductor-fgsea \
+        bioconda::bioconductor-preprocesscore \
+        bioconda::bioconductor-org.hs.eg.db \
+        bioconda::bioconductor-clusterprofiler \
+        bioconda::bioconductor-geoquery \
+        bioconda::bioconductor-genomeinfodbdata \
+        bioconda::bioconductor-go.db
 
-    # GenomeInfoDbData fails to install from the lock file, so we install it separately here
-    Rscript -e "BiocManager::install('GenomeInfoDbData')"
+    mamba clean -a -y
 
 %environment
     export PATH=/opt/conda/bin:$PATH
@@ -47,3 +58,4 @@ from: rocker/tidyverse@sha256:8549448d4bb48663d1148b3acf9d1e001b61aceb6f0a6872db
     Rscript -e "library(GenomeInfoDbData)"
     Rscript -e "library(DirichletReg)"
     Rscript -e "library(clusterProfiler)"
+
