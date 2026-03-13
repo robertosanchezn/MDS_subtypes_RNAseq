@@ -32,8 +32,6 @@ Run the preprocessing scripts:
 ```bash
 Rscript R/01_subsample_reference_sc.R
 Rscript R/02_normalize_and_subset.R
-Deconvolution of a bulk dataset (citation) using cibersortx, and comparison 
-of the cell fractions across defined subtypes
 ```
 
 These scripts generate the files required for CIBERSORTx:
