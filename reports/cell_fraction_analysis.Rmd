@@ -1,0 +1,462 @@
+---
+title: "Analysis of cell samples"
+date: "`r Sys.Date()`"
+output:
+  rmdformats::downcute:
+    code_folding: show
+    self_contained: true
+    thumbnails: false
+    lightbox: true
+pkgdown:
+  as_is: true
+---
+
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)
+library(glue)
+library(readxl)
+library(RColorBrewer)
+library(cowplot)
+library(SummarizedExperiment)
+library(DirichletReg)
+```
+
+```{r}
+set.seed(2026)
+```
+
+
+# Import data
+
+```{r}
+load("../data/raw/rnaseq_hersh.Rdata")
+
+tet2_bi <- read_xlsx("../data/raw/20260305_TET2_MDS_share.xlsx") |> 
+  filter(TET2bi == 1) |> 
+  pull(ID)
+
+who_levels <- c("MDS-TP53", "MDS-SF3B1",  "MDS-5q", "MDS-IB1",  "MDS-IB2",  "MDS-LB")
+subgroups <- c( "Complex",  "SF3B1",      "del5q",  "MDS-IB1",  "MDS-IB2",  "Low blasts",
+                "TET2 biallelic", "TET2 monoallelic", "STAG2","7-", "EZH2")
+
+sample_metadata <- colData(se_hersh) |> 
+  as.data.frame() |> 
+  select(-SEX, -AGE, -Exam_Array) |> 
+  rename_with(str_to_snake) |> 
+  rownames_to_column("sample") |> 
+  select(sample, who, bm_blast, wbc, hb, plt, ipssm, sub_group) |> 
+  mutate(who = factor(who, levels = who_levels)) |> 
+  filter(!is.na(who)) |> 
+  mutate(
+    sub_group = case_when(
+      sub_group != "Unknown TET2" ~ sub_group, 
+      sub_group ==  "Unknown TET2" & sample %in% tet2_bi ~ "TET2 biallelic", 
+      sub_group == "Unknown TET2" & !sample %in% tet2_bi ~ "TET2 monoallelic"
+    ), 
+    sub_group = factor(sub_group, levels = subgroups)
+  )
+```
+
+
+
+
+
+```{r}
+types_palette <- c(
+  "hspc" = "#984EA3", 
+  "dc_monocytic_gmp" = "#4DAF4A" ,
+  "megakaryocytic_erythroid" = "#E41A1C", 
+  "early_lymphoid_bcell" = "#377EB8",
+  "t_nk" = "#FF7F00"
+)
+
+types <- names(types_palette)
+  
+fractions <- Sys.glob("../data/cibersortx_results/CIBERSORTx_Job2_Results.csv") |> 
+  read_csv(show_col_types = FALSE) |> 
+  select(sample = Mixture, all_of(types)) 
+
+table(as.logical(as.matrix(column_to_rownames(fractions, "sample")) == 0))
+```
+
+# Exploratory plots
+
+Barplots, with rows ordered by hierarchical clustering. 
+
+```{r }
+fractions_matrix <- fractions |> 
+  column_to_rownames("sample") |> 
+  as.matrix()  
+
+clust <- fractions_matrix |> 
+  dist() |> 
+  hclust() 
+
+hclust_order <- clust$order |> 
+  set_names(clust$labels)
+
+base_barplot <- sample_metadata |> 
+  filter(!is.na(sub_group)) |> 
+  select(sample, sub_group, who) |> 
+  inner_join(fractions, by = "sample") |> 
+  mutate(
+    hclust_order = hclust_order[sample], 
+    sample = fct_reorder(sample, hclust_order)
+    ) |> 
+  pivot_longer(all_of(types), names_to = "cell_type", values_to = "fraction") |> 
+  mutate(cell_type = factor(cell_type, levels = types)) |> 
+  ggplot(aes(y = sample, x = fraction, fill = cell_type)) +
+  geom_col(color = NA) +
+  scale_x_reverse() +
+  scale_fill_manual(values = types_palette) +
+  theme(
+    axis.text.y = element_blank(), 
+    axis.ticks.y = element_blank(), 
+    strip.text.y = element_text(angle = 0), 
+    strip.clip = "off", 
+    plot.title = element_text(hjust = 1),
+    plot.title.position = "plot", 
+    legend.position = "bottom",
+    axis.title.y = element_blank()
+    ) 
+```
+
+
+```{r fig.height=10, fig.width=10}
+stacked_barplot_by_subgroup <- base_barplot +
+  facet_grid(sub_group ~ . , scales = "free", space = "free") +
+  ggtitle("Subgroup")
+
+stacked_barplot_by_who <- base_barplot +
+  facet_grid(who ~ . , scales = "free", space = "free") +
+  ggtitle("WHO 2022 classification")
+
+stacked_barplot <- plot_grid(
+  # Plots
+  plot_grid(
+    stacked_barplot_by_subgroup + theme(legend.position = "none"),
+    stacked_barplot_by_who  + theme(legend.position = "none"),
+    ncol = 2
+  ), 
+  # Legend
+  get_legend(stacked_barplot_by_subgroup), 
+  ncol = 1, rel_heights = c(15, 1)
+)
+  
+stacked_barplot
+
+ggsave(
+  "../figures/stacked_barplot_cell_fractions.pdf",
+  stacked_barplot,
+  width = 10,
+  height = 10,
+  units = "in"
+  )
+```
+
+# PCAs of the cell fractions
+
+```{r fig.height=10, fig.width=10}
+pca <- prcomp(fractions_matrix)
+
+rotation <- pca$rotation |> 
+  as.data.frame() |> 
+  rownames_to_column("cell_type") |> 
+  mutate(cell_type = str_replace_all(cell_type, "_", "\n"))
+
+importances <- summary(pca)$importance[2,] |> 
+  signif(2)
+
+base_pca <- pca$x |> 
+  as.data.frame() |> 
+  rownames_to_column("sample") |> 
+  left_join(sample_metadata, by = "sample") |> 
+  ggplot(aes(x = PC1, y = PC2)) +
+  geom_segment(
+    data = rotation, 
+    aes(x = 0, y = 0, xend = PC1, yend = PC2)
+  ) +
+  geom_label(
+    data = rotation, 
+    size = 3,
+    aes(x = PC1, y = PC2, label = cell_type)
+  ) +
+  xlab(glue("PC1 ({importances[1]})")) + 
+  ylab(glue("PC2 ({importances[2]})")) +
+  theme_minimal() +
+  theme(
+    axis.text = element_blank(),
+    )
+
+```
+
+Colored by subgroup
+
+```{r fig.height=10, fig.width=10}
+pca_by_subgroup <- base_pca
+
+pca_by_subgroup$layers <- c(
+  geom_point(aes(color = sub_group)), 
+  pca_by_subgroup$layers
+)
+
+pca_by_subgroup <- pca_by_subgroup +
+  scale_color_brewer(palette = "Set3")
+
+pca_by_subgroup
+
+ggsave(
+  "../figures/pca_cell_fractions_by_subgroup.png",
+  pca_by_subgroup,
+  width = 10,
+  height = 10,
+  units = "in"
+  )
+```
+
+* SF3B1 are enriched in erythroid. This is expected and acts as a sanity check. 
+
+* del5qs are enriched in lymphocytes. These have an inflammatory biology so it checks out. 
+
+
+
+```{r fig.height=10, fig.width=10}
+pca_by_subgroup_hl <- base_pca
+
+pca_by_subgroup_hl$layers <- c(
+  geom_point(
+    aes(
+      color = sub_group, 
+      alpha = sub_group %in% c("TET2 biallelic", "TET2 monoallelic", "STAG2","7-", "EZH2"), 
+      ),
+    ), 
+  pca_by_subgroup_hl$layers
+)
+
+pca_by_subgroup_hl <- pca_by_subgroup_hl +
+  scale_color_brewer(palette = "Set3") +
+  scale_alpha_manual(values = 0:1) +
+  theme(legend.position = "none")
+
+pca_by_subgroup_hl
+
+```
+
+
+Focusing on the newly defined groups: 
+
+* TET2bi is enriched in HPSCs and myeloid lineage, while depleted in erythroid/megakaryocytic. 
+
+* STAG2 is enriched in HSPCs, and depleted in eveythig else "leukemic stem cell-like". 
+
+Colored by WHO 2022
+
+```{r fig.height=10, fig.width=10}
+pca_by_who <- base_pca
+
+pca_by_who$layers <- c(
+  geom_point(aes(fill = who), color = "lightgrey", shape = 21), 
+  pca_by_subgroup$layers
+)
+
+pca_by_who <- pca_by_who +
+  scale_fill_brewer(palette = "Set3")
+
+pca_by_who
+
+ggsave(
+  "../figures/pca_cell_fractions_by_who.png",
+  pca_by_who,
+  width = 10,
+  height = 10,
+  units = "in"
+  )
+```
+
+# Boxplots of cell fractions
+
+```{r fig.height=9, fig.width=9}
+
+base_boxplot <- fractions |>
+  inner_join(sample_metadata, by = "sample") |> 
+  pivot_longer(all_of(types), values_to = "fraction", names_to = "cell_type") |> 
+  mutate(cell_type = factor(cell_type, levels = types)) |> 
+  ggplot(aes(x = cell_type, y = fraction, color = cell_type)) +
+  geom_boxplot(outlier.alpha = 0.5, outlier.size = 0.5) +
+  scale_color_manual(values = types_palette) +
+  theme(
+    axis.text.x = element_blank(), 
+    strip.text.x = element_text(angle = 90, hjust = 1), 
+    legend.position = "bottom",
+  )
+
+boxplot <- plot_grid(
+  # Plots
+  plot_grid(
+    base_boxplot + facet_grid(~sub_group) +ggtitle("Subgroup") + theme(legend.position = "none"),
+    base_boxplot + facet_grid(~who) + ggtitle("WHO") + theme(legend.position = "none"),
+    ncol = 1
+  ), 
+  # Legend
+  get_legend(base_boxplot), 
+  ncol = 1, rel_heights = c(15, 1)
+)
+  
+boxplot
+
+ggsave(
+  "../figures/boxplot_cell_fractions.pdf",
+  boxplot,
+  width = 9,
+  height = 9,
+  units = "in"
+  )
+```
+
+```{r fig.height=7, fig.width=12}
+boxplot_by_group <- fractions |>
+  inner_join(sample_metadata, by = "sample") |> 
+  pivot_longer(all_of(types), values_to = "fraction", names_to = "cell_type") |> 
+  pivot_longer(c(sub_group, who), names_to = "classification", values_to = "group") |> 
+  mutate(cell_type = factor(cell_type, levels = types)) |> 
+  ggplot(aes(x = group, y = fraction, color = group)) +
+  scale_color_manual(values = rep(brewer.pal(n = 9, "Set1"), 2)) +
+  facet_grid(classification ~ cell_type, scales = "free", space = "free") +
+  geom_boxplot(outlier.alpha = 0.5, outlier.size = 0.5) +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1),
+    legend.position = "none",
+  )
+  
+boxplot_by_group
+
+ggsave(
+  "../figures/boxplot_by_group_cell_fractions.pdf",
+  boxplot_by_group,
+  width = 12,
+  height = 7,
+  units = "in"
+  )
+```
+
+
+# Dirichlet regression
+
+First we evaluate if there are zeroes or NAs
+
+```{r}
+sum(fractions_matrix == 0)
+```
+
+```{r}
+sum(is.na(fractions_matrix))
+```
+
+We add a pseudocount
+
+```{r}
+pseudocount <- unique(sort(as.double(fractions_matrix)))[2]
+pseudoc_matrix <- fractions_matrix + pseudocount
+pseudoc_matrix <- pseudoc_matrix / rowSums(pseudoc_matrix)
+```
+
+## Subgroup 
+
+We set `Low blasts` as the baseline group. 
+
+```{r}
+dr_df <- as.data.frame(pseudoc_matrix) |> 
+  rownames_to_column("sample") |> 
+  inner_join(select(sample_metadata, sample, sub_group), by = "sample") |> 
+  select(sub_group, all_of(types)) |> 
+  mutate(sub_group = fct_relevel(sub_group, "Low blasts"))
+
+Y <- DR_data(select(dr_df, -sub_group))
+
+fit <- DirichReg(
+  Y ~ sub_group,
+  data = dr_df,
+  control = list(iterlim = 1e9, tol1 = 1e-5, tol2 = 1e-10 )
+)
+
+summary(fit)
+```
+
+Bootstrap, to obtain confidence intervals. 
+
+## WHO 2022
+
+We use `MDS-LB` as the baseline group
+
+```{r}
+dr_df <- as.data.frame(pseudoc_matrix) |> 
+  rownames_to_column("sample") |> 
+  left_join(select(sample_metadata, sample, who), by = "sample") |> 
+  select(who, all_of(types)) |> 
+  mutate(who = fct_relevel(who, "MDS-LB"))
+
+Y <- DR_data(select(dr_df, -who))
+
+fit <- DirichReg(
+  Y ~ who,
+  data = dr_df, 
+  control = list(iterlim = 1e9, tol1 = 1e-5, tol2 = 1e-10 )
+)
+
+summary(fit)
+```
+
+## Hematogram
+
+We predict the hematological clinical variables, scaling them first with z-score
+
+```{r}
+hemato_vars <- c("bm_blast","wbc","hb","plt")
+
+hematogram <- sample_metadata |> 
+  select(sample, all_of(hemato_vars)) |> 
+  drop_na() |> 
+  column_to_rownames("sample") |> 
+  as.matrix() |> 
+  scale() |> 
+  as.data.frame() |> 
+  rownames_to_column("sample")
+
+dr_df <- as.data.frame(pseudoc_matrix) |> 
+  rownames_to_column("sample") |> 
+  left_join(hematogram, by = "sample")
+
+Y <- DR_data(select(dr_df, -all_of(hemato_vars), -sample))
+
+fit <- DirichReg(
+  as.formula(glue("Y ~ {paste(hemato_vars, collapse = ' + ')}")),
+  data = dr_df, 
+  control = list(iterlim = 1e9, tol1 = 1e-5, tol2 = 1e-10 )
+)
+
+s <- summary(fit)
+
+s
+```
+
+```{r}
+s$coef.mat |> 
+  as.data.frame() |> 
+  split(unlist(map2(s$n.vars, s$varnames, ~rep(.y, .x)))) |> 
+  bind_rows(.id = "cell_type") |> 
+  rownames_to_column("measure") |> 
+  mutate(
+    cell_type = factor(cell_type, levels = types), 
+    measure = str_split_i(measure, "\\.", 1), 
+    Estimate = if_else(`Pr(>|z|)` < 0.05, Estimate, NA)
+    ) |> 
+  filter(measure != "X") |> 
+  ggplot(aes(x = measure, y = cell_type, fill = Estimate)) +
+  geom_tile() +
+  geom_text(aes(label = signif(Estimate, 2))) +
+  scale_fill_distiller(palette = "Spectral") 
+
+```
+
+Coefficients of each cell type vs clinical measurements. Only significant (pvalue < 0.05)
+estimates are shown. 
