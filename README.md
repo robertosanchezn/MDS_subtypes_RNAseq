@@ -79,7 +79,35 @@ Other parameters:
     default
 ```
 
-# 4. Impute cell-type expression
+# 4. Impute cell fractions
+
+Run CIBERSORTx again with the following settings:
+
+```Analysis Module: Impute Cell Fractions
+Analysis Mode: Custom
+
+Signature matrix file:
+    signature_matrix.txt
+
+Mixture file:
+    bulk_mixture.txt
+
+Batch correction:
+    enabled
+
+Batch correction mode:
+    S-mode
+
+Single cell reference matrix file:
+    sc_reference_subsetted.txt
+
+Other parameters:
+    default
+```
+
+
+
+# 5. Impute cell-type expression
 
 Run CIBERSORTx again with the following settings:
 
@@ -106,7 +134,6 @@ Single cell reference matrix file:
     sc_reference_subsetted.txt
 ```
 
-# 5. Download results
 
 
 
