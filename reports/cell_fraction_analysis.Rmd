@@ -64,7 +64,6 @@ sample_metadata <- colData(se_hersh) |>
   rownames_to_column("sample") |> 
   select(sample, who, bm_blast, wbc, hb, plt, ipssm, sub_group) |> 
   mutate(who = factor(who, levels = who_levels)) |> 
-  filter(!is.na(who)) |> 
   mutate(sub_group = factor(sub_group, levels = subgroups))
 
 types_palette <- c(
@@ -77,7 +76,7 @@ types_palette <- c(
 
 types <- names(types_palette)
   
-fractions <- Sys.glob("../data/cibersortx_results/CIBERSORTx_Job2_Results.csv") |> 
+fractions <- "../data/cibersortx_results/CIBERSORTx_Job2_Results.csv" |> 
   read_csv(show_col_types = FALSE) |> 
   select(sample = Mixture, all_of(types)) 
 ```
@@ -362,6 +361,145 @@ pseudoc_matrix <- fractions_matrix + pseudocount
 pseudoc_matrix <- pseudoc_matrix / rowSums(pseudoc_matrix)
 ```
 
+## New subgroups 
+
+We fit the Dirichlet using this modeling:
+
+* We filter out the previously existing molecular subgroups (`del5q-IB`, `SF3B1-IB`, `Complex`). 
+
+* We collapse the morphological groups (`MDS-LB`, `MDS-IB1`, `MDS-IB2`) into a single baseline subgroup. 
+
+* We leave the newly defined molecular subgroups (`EZH2`, `TET2-bi`, `-7` and `STAG2`). 
+
+* We fit the model cell fractions ~ new_subgroup 
+
+We set the new collapsed `morphological` as the baseline group. 
+
+```{r}
+dr_df <- as.data.frame(pseudoc_matrix) |> 
+  rownames_to_column("sample") |> 
+  inner_join(select(sample_metadata, sample, sub_group), by = "sample") |> 
+  select(sub_group, all_of(types)) |> 
+  filter(!sub_group %in% c("del5q-IB", "SF3B1-IB", "Complex")) |> 
+  mutate(
+    sub_group = if_else(
+      sub_group %in% c("MDS-LB", "MDS-IB1", "MDS-IB2"),
+      "morphological",
+      sub_group
+      ),
+    sub_group = fct_drop(fct_relevel(sub_group, "morphological"))
+    )
+
+Y <- DR_data(select(dr_df, -sub_group))
+
+fit <- DirichReg(Y ~ sub_group, data = dr_df)
+
+s <- summary(fit)
+
+s
+```
+
+Coefficients of each subgroup vs clinical measurements. Only significant (pvalue < 0.05)
+estimates are shown. 
+
+```{r message=FALSE, warning=FALSE}
+s$coef.mat |> 
+  as.data.frame() |> 
+  split(unlist(map2(s$n.vars, s$varnames, ~rep(.y, .x)))) |> 
+  bind_rows(.id = "cell_type") |> 
+  rownames_to_column("subgroup") |> 
+  mutate(
+    cell_type = factor(cell_type, levels = types), 
+    subgroup = str_match(subgroup, "sub_group(.+)\\.\\d$")[,2], 
+    Estimate = if_else(`Pr(>|z|)` < 0.05, Estimate, NA)
+    ) |> 
+  filter(subgroup != "X") |> 
+  ggplot(aes(x = subgroup, y = cell_type, fill = Estimate)) +
+  geom_tile() +
+  geom_text(aes(label = signif(Estimate, 2))) +
+  scale_fill_distiller(palette = "Spectral", na.value = "lightgrey") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+To compute confidence intervals for the predictions, we run 100 bootstraps of 
+the modelling
+
+```{r}
+collapsed_subgroups <- levels(dr_df$sub_group)
+
+predict_bootstrap_dr <- function(i){
+  # Stratified subsampling with replacement
+  df_boot <- dr_df |> 
+    group_by(sub_group) |> 
+    slice_sample(prop = 1, replace = TRUE) |> 
+    ungroup() |> 
+    drop_na()
+  
+  # Fit
+  y_boot  <- DR_data(select(df_boot, -sub_group))
+  fit     <- DirichReg(y_boot ~ sub_group, data = df_boot)
+  
+  # Predict and reformat
+  pred <- predict(fit, tibble(sub_group = collapsed_subgroups)) 
+  colnames(pred) <- types
+  pred <- as.data.frame(pred)
+  pred$sub_group <- factor(collapsed_subgroups, levels = collapsed_subgroups)
+  pred
+}
+
+n_bootstraps <- 100
+
+bootstraps_results <- 1:n_bootstraps |> 
+  map(predict_bootstrap_dr, .progress = "bootstrapping") |> 
+  bind_rows() |> 
+  pivot_longer(all_of(types), names_to = "cell_type", values_to = "fraction") |> 
+  group_by(sub_group, cell_type) |> 
+  summarise(
+    median = median(fraction), 
+    lower_ci = quantile(fraction, 0.025),
+    upper_ci = quantile(fraction, 0.975), 
+    .groups = "drop_last"
+    )  |> 
+  ungroup() |> 
+  mutate(cell_type = factor(cell_type, levels = types))
+```
+
+```{r}
+dodge <- 0.5
+
+bootstraps_results |> 
+  ggplot() +
+  geom_point(
+    aes(x = cell_type, y = median, color = sub_group), 
+    position = position_dodge(width = dodge)
+    ) + 
+  geom_segment(
+    aes(x = cell_type, y = lower_ci, yend = upper_ci, color = sub_group), 
+    position = position_dodge(width = dodge)
+  ) +
+  scale_color_manual(values = c(subgroup_palette, "morphological" = "black")) +
+  ylab("Predicted cellular fraction\n (with 95% CIs)\n across 100 bootstraps") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+```{r}
+dodge <- 0.5
+
+bootstraps_results |> 
+  ggplot() +
+  geom_point(
+    aes(x = sub_group, y = median, color = cell_type), 
+    position = position_dodge(width = dodge)
+    ) + 
+  geom_segment(
+    aes(x = sub_group, y = lower_ci, yend = upper_ci, color = cell_type), 
+    position = position_dodge(width = dodge)
+  ) +
+  scale_color_manual(values = types_palette) +
+  ylab("Predicted cellular fraction\n (with 95% CIs)\n across 100 bootstraps") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
 ## Subgroup 
 
 We fit the model cell fractions ~ subgroup
@@ -405,92 +543,6 @@ s$coef.mat |>
   scale_fill_distiller(palette = "Spectral", na.value = "lightgrey") +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
-
-To compute confidence intervals for the predictions, we run 100 bootstraps of 
-the modelling
-
-```{r echo=FALSE}
-bootstrap_results_file <- "../results/dirichlet_regression_results.csv"
-bootstrap_file_missing <- !file.exists(bootstrap_results_file)
-```
-
-
-```{r eval = bootstrap_file_missing}
-n_bootstraps <- 100
-
-bootstraps_results <- 1:n_bootstraps %>%
-  map(~ {
-    idx <- sample(1:nrow(dr_df), nrow(dr_df), replace = TRUE)
-    df_boot <- dr_df[idx, ]
-    Y_boot <- DR_data(df_boot %>% select(-sub_group))
-    fit <- DirichReg(Y_boot ~ sub_group, data = df_boot)
-    prediction <- predict(fit, tibble(sub_group = subgroups)) 
-    rownames(prediction) <- subgroups
-    colnames(prediction) <- types
-    
-    prediction |> 
-      as.data.frame() |> 
-      rownames_to_column("sub_group") 
-    
-  }, .progress = "calculating_bootstraps") |> 
-  bind_rows(.id = "bootstrap") |> 
-  pivot_longer(all_of(types), names_to = "cell_type", values_to = "fraction") |> 
-  group_by(sub_group, cell_type) |> 
-  summarise(
-    median = median(fraction), 
-    lower_ci = quantile(fraction, 0.025),
-    upper_ci = quantile(fraction, 0.975), 
-    groups = "drop_last"
-    )  |> 
-  write_csv(bootstrap_results_file)
-
-  
-```
-
-
-```{r}
-bootstraps_results <- read_csv(bootstrap_results_file) |> 
-  mutate(
-    cell_type = factor(cell_type, levels = types), 
-    sub_group = factor(sub_group, levels = subgroups)
-    ) 
-
-dodge <- 0.5
-
-bootstraps_results |> 
-  ggplot() +
-  geom_point(
-    aes(x = cell_type, y = median, color = sub_group), 
-    position = position_dodge(width = dodge)
-    ) + 
-  geom_segment(
-    aes(x = cell_type, y = lower_ci, yend = upper_ci, color = sub_group), 
-    position = position_dodge(width = dodge)
-  ) +
-  scale_color_manual(values = subgroup_palette) +
-  ylab("Predicted cellular fraction\n (with 95% CIs)\n across 100 bootstraps") +
-  theme(axis.text.x = element_text(angle = 90, hjust = 1))
-  
-```
-
-```{r}
-dodge <- 0.5
-
-bootstraps_results |> 
-  ggplot() +
-  geom_point(
-    aes(x = sub_group, y = median, color = cell_type), 
-    position = position_dodge(width = dodge)
-    ) + 
-  geom_segment(
-    aes(x = sub_group, y = lower_ci, yend = upper_ci, color = cell_type), 
-    position = position_dodge(width = dodge)
-  ) +
-  scale_color_manual(values = types_palette) +
-  ylab("Predicted cellular fraction\n (with 95% CIs)\n across 100 bootstraps") +
-  theme(axis.text.x = element_text(angle = 90, hjust = 1))
-```
-
 
 
 ## WHO 2022
@@ -562,7 +614,7 @@ s <- summary(fit)
 s
 ```
 
-```{r}
+```{r warning=FALSE}
 s$coef.mat |> 
   as.data.frame() |> 
   split(unlist(map2(s$n.vars, s$varnames, ~rep(.y, .x)))) |> 

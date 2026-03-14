@@ -13,7 +13,122 @@ pkgdown:
 
 ```{r message=FALSE, warning=FALSE}
 library(tidyverse)
-library(limma)
-library(clusterProfiler)
+library(ggrepel)
+library(SummarizedExperiment)
 ```
+
+```{r}
+load("../data/raw/rnaseq_hersh.Rdata")
+
+subgroup_palette <- c(
+  "EZH2"      = "#E69F00", 
+  "TET2-bi"   = "#56B4E9", 
+  "-7"        = "#009E73", 
+  "STAG2"     = "#CC79A7", 
+  "del5q-IB"  = "#F0E442", 
+  "SF3B1-IB"  = "#0072B2", 
+  "Complex"   = "#D55E00", 
+  "MDS-LB"    = "#999999", 
+  "MDS-IB1"   = "grey40", 
+  "MDS-IB2"   = "black"
+)
+
+subgroups <- names(subgroup_palette)
+
+sample_metadata <- colData(se_hersh) |> 
+  as.data.frame() |> 
+  select(sub_group) |> 
+  rownames_to_column("sample") |> 
+  mutate(sub_group = factor(sub_group, levels = subgroups)) 
+
+types_palette <- c(
+                      "hspc" = "#984EA3", 
+          "dc_monocytic_gmp" = "#4DAF4A",
+  "megakaryocytic_erythroid" = "#E41A1C", 
+      "early_lymphoid_bcell" = "#377EB8",
+                      "t_nk" = "#FF7F00"
+)
+
+types <- names(types_palette)
+  
+```
+
+# DE
+
+```{r}
+de <- read_csv(
+  "../data/intermediate/differential_gene_expression_results.csv",
+  col_types = "cccdddd"
+  ) |> 
+  rename_with(str_to_snake) |> 
+  mutate(
+    subgroup = factor(str_remove(contrast, " vs rest"), levels = subgroups), 
+    contrast = fct_reorder(contrast, as.integer(subgroup)), 
+    cell_type = factor(cell_type, levels = types)
+    ) 
+
+```
+
+
+```{r fig.height=11, fig.width=8}
+de |> 
+  filter(cell_type == "hspc") |> 
+  filter(subgroup %in% subgroups[1:4]) |> 
+  mutate(
+    -log10(p_value),
+    signif = adj_p_val < 0.05, 
+    label = if_else(signif, symbol, NA)
+    ) |> 
+  ggplot(aes(x = log_fc, y = `-log10(p_value)`, label = label, color = signif)) +
+  geom_point(size = 1) +
+  geom_text_repel() +
+  geom_vline(xintercept = 0, linetype = 2, linewidth = 0.5) +
+  geom_hline(yintercept = -log10(0.05), linetype = 2, linewidth = 0.5) +
+  scale_fill_continuous(
+    palette = rev(brewer.pal(11, "Spectral")), 
+    trans = "log10"
+    ) +
+  facet_grid(contrast ~ . ) +
+  scale_y_sqrt()
+```
+
+# GSEA
+
+```{r}
+gsea <- read_csv(
+  "../data/intermediate/gene_set_enrichment_results.csv",
+  col_types = "ccccddddddcc"
+  ) |> 
+  mutate(
+    subgroup = factor(str_remove(contrast, " vs rest"), levels = subgroups), 
+    contrast = fct_reorder(contrast, as.integer(subgroup)), 
+    cell_type = factor(cell_type, levels = types)
+    ) 
+```
+
+```{r warning=FALSE}
+gsea |> 
+  mutate(
+    direction =  if_else(NES > 0, "up", "down"), 
+    contrast = fct_relabel(contrast, ~str_replace_all(.x, " ", "\n"))
+    ) |> 
+  filter(p.adjust < 0.05) |> 
+  group_by(contrast, cell_type, direction) |> 
+  tally() |> 
+  ggplot(aes(x = cell_type, y = n, fill = direction)) +
+  geom_col(position = position_dodge2(preserve = "single")) +
+  facet_grid(~contrast, drop = FALSE) + 
+  ylab("number of significantly enriched\ngene sets (padj < 0.05)") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), strip.clip = "off")
+```
+
+```{r}
+gsea |> 
+  filter(cell_type == "hspc") |> 
+  filter(subgroup %in% subgroups[1:4]) |> 
+  filter(p.adjust < 0.05)
+```
+
+
+
 
