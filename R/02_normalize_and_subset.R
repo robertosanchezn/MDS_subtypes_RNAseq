@@ -76,21 +76,4 @@ write.table(
 
 glue("Bulk mixture matrix written to {bulk_file}")
 
-# Subset genes: top 1000 protein_coding genes with the most variance in hspcs
 
-protein_coding_genes <- rowData(se_hersh) |>
-  as.data.frame() |> 
-  filter(gene_biotype == "protein_coding") |> 
-  pull(symbol)
-
-sc[
-  rownames(sc) %in% protein_coding_genes, 
-  colnames(sc) == "hspc"
-] |> 
-  asplit(1) |> 
-  map_dbl(var) |> 
-  sort(decreasing = TRUE) %>%
-  head(1000) |> 
-  names() |> 
-  write_lines("data/intermediate/gene_subset.txt")
-  

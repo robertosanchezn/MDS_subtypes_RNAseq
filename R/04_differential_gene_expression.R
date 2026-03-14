@@ -51,7 +51,6 @@ glue("Calculating differential expression across {length(expression_matrices)} c
 
 limma_results <- diff_exp_grid |> 
   asplit(1) |>
-  head(15) |> 
   map(~{
     subgroup <- .x[['subgroup']]
     cell_type <- .x[['cell_type']]
@@ -72,5 +71,5 @@ limma_results <- diff_exp_grid |>
 limma_results |> 
   select(cell_type, contrast, symbol, logFC, t, P.Value, adj.P.Val) |> 
   mutate(across(where(is.double), ~signif(.x, 3))) |> 
-  write_csv("results/differential_gene_expression_results.csv")
+  write_csv("data/intermediate/differential_gene_expression_results.csv")
 
