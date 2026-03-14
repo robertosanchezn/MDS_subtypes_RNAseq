@@ -1,2 +1,3 @@
-apptainer/Apptainer.sif
+apptainer/*.sif
 */*.log
+data/intermediate

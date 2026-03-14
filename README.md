@@ -42,7 +42,7 @@ data/intermediate/
   bulk_mixture.txt
   gene_subset.txt
 ```
-
+---
 # 2. Upload files to CIBERSORTx
 
 Go to 
@@ -57,12 +57,14 @@ Menu -> Upload Files
  `data/intermediate/bulk_mixture.txt` 
  `data/intermediate/gene_subset.txt`
  
+---
 # 3. Create signature matrix
 
 Menu → Run CIBERSORTx
  
 Parameters: 
 ```
+
 Analysis Module: Create Signature Matrix
 Analysis Mode: Custom
 Input Data Type: scRNA-Seq
@@ -76,7 +78,7 @@ Custom signature file name:
 Other parameters:
     default
 ```
-
+---
 # 4. Impute cell fractions
 
 Run CIBERSORTx again with the following settings:
@@ -102,9 +104,7 @@ Single cell reference matrix file:
 Other parameters:
     default
 ```
-
-
-
+---
 # 5. Impute cell-type expression
 
 Run CIBERSORTx again with the following settings:
@@ -131,9 +131,6 @@ Batch correction mode:
 Single cell reference matrix file:
     sc_reference_subsetted.txt
 ```
-
-
-
-
-
+---
+# 6. Run reports
 
