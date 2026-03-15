@@ -1,9 +1,6 @@
 Bootstrap: docker
 from: rocker/tidyverse@sha256:8549448d4bb48663d1148b3acf9d1e001b61aceb6f0a6872dbbdcada2530da56
 
-%files 
-    environment.lock /opt/environment.lock
-
 %post
     # 1. Install System Dependencies 
     apt-get update && apt-get install -y --no-install-recommends \
@@ -29,20 +26,21 @@ from: rocker/tidyverse@sha256:8549448d4bb48663d1148b3acf9d1e001b61aceb6f0a6872db
     # 3. Install libraries
     mamba install --yes \
         r-tidyverse \
+        r-gt \
         r-hdf5r \
         r-seurat \
+        r-rmdformats \
         r-biocmanager \
         r-dirichletreg \
-        r-rmdformats \
+        bioconda::bioconductor-go.db \
         bioconda::bioconductor-limma \
-        bioconda::bioconductor-complexheatmap \
         bioconda::bioconductor-fgsea \
-        bioconda::bioconductor-preprocesscore \
-        bioconda::bioconductor-org.hs.eg.db \
-        bioconda::bioconductor-clusterprofiler \
         bioconda::bioconductor-geoquery \
+        bioconda::bioconductor-org.hs.eg.db \
+        bioconda::bioconductor-preprocesscore \
+        bioconda::bioconductor-complexheatmap \
+        bioconda::bioconductor-clusterprofiler \
         bioconda::bioconductor-genomeinfodbdata \
-        bioconda::bioconductor-go.db
 
     mamba clean -a -y
 
